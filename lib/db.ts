@@ -25,9 +25,12 @@ interface DbQuestionRow {
   multi: number;
 }
 
-/** Opens the database read-only and returns it. Caller is responsible for closing. */
 function openDb(): DatabaseSync {
   return new DatabaseSync(DB_PATH, { readOnly: true });
+}
+
+function openDbWrite(): DatabaseSync {
+  return new DatabaseSync(DB_PATH);
 }
 
 export interface StatsRow {
@@ -168,6 +171,96 @@ export function getFlaggedQuestions(): QuizQuestion[] {
       )
       .all() as unknown as DbQuestionRow[];
     return rows.map(mapRow);
+  } finally {
+    db.close();
+  }
+}
+
+// ── Write operations ───────────────────────────────────────────────────────────
+
+/** Toggle flag on a question. Returns true if now flagged, false if removed. */
+export function toggleFlagged(questionId: number): boolean {
+  const db = openDbWrite();
+  try {
+    const existing = db
+      .prepare("SELECT 1 FROM flagged_stack WHERE question_id = ?")
+      .get(questionId);
+    if (existing) {
+      db.prepare("DELETE FROM flagged_stack WHERE question_id = ?").run(questionId);
+      return false;
+    } else {
+      db.prepare("INSERT INTO flagged_stack (question_id) VALUES (?)").run(questionId);
+      return true;
+    }
+  } finally {
+    db.close();
+  }
+}
+
+export interface AnswerRecord {
+  questionId: number;
+  selected: string;
+  isCorrect: boolean;
+  section: string;
+}
+
+/** Save a completed session and update wrong_stack accordingly. */
+export function saveSession(
+  mode: string,
+  score: number,
+  total: number,
+  passed: boolean,
+  answers: AnswerRecord[]
+): void {
+  const db = openDbWrite();
+  const now = new Date().toISOString();
+  try {
+    db.exec("BEGIN");
+
+    const { lastInsertRowid: sessionId } = db
+      .prepare(
+        `INSERT INTO sessions (mode, started_at, finished_at, score, total, passed)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(mode, now, now, score, total, passed ? 1 : 0);
+
+    const insertAnswer = db.prepare(
+      `INSERT INTO session_answers (session_id, question_id, selected, is_correct, section)
+       VALUES (?, ?, ?, ?, ?)`
+    );
+
+    for (const ans of answers) {
+      insertAnswer.run(sessionId, ans.questionId, ans.selected, ans.isCorrect ? 1 : 0, ans.section);
+
+      if (!ans.isCorrect) {
+        db.prepare(
+          `INSERT INTO wrong_stack (question_id, times_wrong, last_seen, correct_streak)
+           VALUES (?, 1, ?, 0)
+           ON CONFLICT(question_id) DO UPDATE SET
+             times_wrong    = times_wrong + 1,
+             last_seen      = excluded.last_seen,
+             correct_streak = 0`
+        ).run(ans.questionId, now);
+      } else {
+        const row = db
+          .prepare("SELECT correct_streak FROM wrong_stack WHERE question_id = ?")
+          .get(ans.questionId) as { correct_streak: number } | undefined;
+        if (row) {
+          if (row.correct_streak + 1 >= 2) {
+            db.prepare("DELETE FROM wrong_stack WHERE question_id = ?").run(ans.questionId);
+          } else {
+            db.prepare(
+              "UPDATE wrong_stack SET correct_streak = correct_streak + 1, last_seen = ? WHERE question_id = ?"
+            ).run(now, ans.questionId);
+          }
+        }
+      }
+    }
+
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
   } finally {
     db.close();
   }

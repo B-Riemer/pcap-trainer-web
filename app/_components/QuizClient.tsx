@@ -7,12 +7,14 @@ import type { QuizQuestion } from "@/lib/db";
 // ── Mode config ────────────────────────────────────────────────────────────────
 
 const MODE_CONFIG: Record<string, { label: string; timerSecs: number; feedback: boolean; color: string }> = {
-  exam:         { label: "Prüfungsmodus",  timerSecs: 65 * 60, feedback: false, color: "text-pcap-blue" },
-  learn:        { label: "Lernmodus",      timerSecs: 0,       feedback: true,  color: "text-pcap-green" },
-  "wrong-stack":{ label: "Falsch-Stapel",  timerSecs: 0,       feedback: true,  color: "text-pcap-red" },
-  flagged:      { label: "Unsicher-Stapel",timerSecs: 0,       feedback: true,  color: "text-pcap-orange" },
-  quicktest:    { label: "Schnelltest",    timerSecs: 0,       feedback: false, color: "text-pcap-orange" },
+  exam:          { label: "Prüfungsmodus",  timerSecs: 65 * 60, feedback: false, color: "text-pcap-blue" },
+  learn:         { label: "Lernmodus",      timerSecs: 0,       feedback: true,  color: "text-pcap-green" },
+  "wrong-stack": { label: "Falsch-Stapel",  timerSecs: 0,       feedback: true,  color: "text-pcap-red" },
+  flagged:       { label: "Unsicher-Stapel",timerSecs: 0,       feedback: true,  color: "text-pcap-orange" },
+  quicktest:     { label: "Schnelltest",    timerSecs: 0,       feedback: false, color: "text-pcap-orange" },
 };
+
+const LEARN_QUEUE_KEY = "pcap-learn-queue";
 
 function setsEqual(a: Set<string>, b: Set<string>) {
   if (a.size !== b.size) return false;
@@ -25,8 +27,7 @@ function setsEqual(a: Set<string>, b: Set<string>) {
 function Timer({ seconds }: { seconds: number }) {
   const mins = Math.floor(seconds / 60).toString().padStart(2, "0");
   const secs = (seconds % 60).toString().padStart(2, "0");
-  const color =
-    seconds < 300 ? "text-pcap-red" : seconds < 600 ? "text-pcap-orange" : "text-pcap-muted";
+  const color = seconds < 300 ? "text-pcap-red" : seconds < 600 ? "text-pcap-orange" : "text-pcap-muted";
   return (
     <span className={`font-mono text-sm font-bold tabular-nums ${color}`}>
       {mins}:{secs}
@@ -39,7 +40,7 @@ function ProgressBar({ current, total }: { current: number; total: number }) {
     <div className="h-1 w-full rounded-full bg-pcap-border">
       <div
         className="h-full rounded-full bg-pcap-blue transition-all duration-300"
-        style={{ width: `${(current / total) * 100}%` }}
+        style={{ width: `${total > 0 ? (current / total) * 100 : 0}%` }}
       />
     </div>
   );
@@ -48,17 +49,9 @@ function ProgressBar({ current, total }: { current: number; total: number }) {
 type AnswerState = "idle" | "selected" | "correct" | "wrong" | "missed";
 
 function AnswerOption({
-  letter,
-  text,
-  state,
-  disabled,
-  onToggle,
+  letter, text, state, disabled, onToggle,
 }: {
-  letter: string;
-  text: string;
-  state: AnswerState;
-  disabled: boolean;
-  onToggle: () => void;
+  letter: string; text: string; state: AnswerState; disabled: boolean; onToggle: () => void;
 }) {
   const containerStyles: Record<AnswerState, string> = {
     idle:     "border-pcap-border bg-pcap-surface hover:border-pcap-muted hover:bg-pcap-border/30",
@@ -74,24 +67,19 @@ function AnswerOption({
     wrong:    "bg-pcap-red text-pcap-bg",
     missed:   "bg-pcap-green text-pcap-bg",
   };
-
   return (
     <button
       onClick={onToggle}
       disabled={disabled}
       className={`flex w-full items-start gap-3 rounded-xl border p-4 text-left transition-colors disabled:cursor-default ${containerStyles[state]}`}
     >
-      <span
-        className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs font-bold ${badgeStyles[state]}`}
-      >
+      <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs font-bold ${badgeStyles[state]}`}>
         {letter}
       </span>
       <span className="text-sm leading-relaxed text-pcap-text">{text}</span>
     </button>
   );
 }
-
-// ── Loading / Empty / Error screens ───────────────────────────────────────────
 
 function CenteredScreen({ children }: { children: React.ReactNode }) {
   return (
@@ -101,40 +89,65 @@ function CenteredScreen({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ── Quiz session (inner component, questions already loaded) ──────────────────
+// ── Quiz session ───────────────────────────────────────────────────────────────
 
-function QuizSession({
-  questions,
-  mode,
-}: {
-  questions: QuizQuestion[];
-  mode: string;
-}) {
+function QuizSession({ questions, mode }: { questions: QuizQuestion[]; mode: string }) {
   const router = useRouter();
   const cfg = MODE_CONFIG[mode] ?? MODE_CONFIG.exam;
-
+  const isLearn = mode === "learn";
   const total = questions.length;
 
-  // Queue of question indices — skip moves current to the back
-  const [queue, setQueue] = useState<number[]>(() => questions.map((_, i) => i));
+  // Learn mode: restore queue from localStorage, others start fresh
+  const [queue, setQueue] = useState<number[]>(() => {
+    if (isLearn) {
+      try {
+        const saved = localStorage.getItem(LEARN_QUEUE_KEY);
+        if (saved) {
+          const parsed: unknown = JSON.parse(saved);
+          if (
+            Array.isArray(parsed) &&
+            parsed.every((i) => typeof i === "number" && i >= 0 && i < total)
+          ) {
+            return parsed as number[];
+          }
+        }
+      } catch {}
+    }
+    return questions.map((_, i) => i);
+  });
+
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [phase, setPhase] = useState<"answering" | "revealed">("answering");
   const [secondsLeft, setSecondsLeft] = useState(cfg.timerSecs);
+  // Track which question IDs user flagged this session
+  const [flaggedIds, setFlaggedIds] = useState<Set<number>>(new Set());
   const finishedRef = useRef(false);
   const answersRef = useRef<Record<number, string>>({});
 
   const currentIdx = queue[0];
   const question = questions[currentIdx];
-  const answered = total - queue.length;         // how many have been answered
-  const isLast = queue.length === 1;             // last remaining in queue
+  const answered = total - queue.length;
+  const isLast = queue.length === 1;
   const correctSet = new Set(question.correct.split(",").map((s) => s.trim()));
+  const isFlagged = flaggedIds.has(question.id);
 
-  // ── Finish ─────────────────────────────────────────────────────────────────
+  // Persist learn queue to localStorage on every change
+  useEffect(() => {
+    if (isLearn) {
+      localStorage.setItem(LEARN_QUEUE_KEY, JSON.stringify(queue));
+    }
+  }, [isLearn, queue]);
+
+  // ── Finish & save session ─────────────────────────────────────────────────
 
   const finishQuiz = useCallback(
     (finalAnswers: Record<number, string>) => {
       if (finishedRef.current) return;
       finishedRef.current = true;
+
+      if (isLearn) {
+        localStorage.removeItem(LEARN_QUEUE_KEY);
+      }
 
       const score = questions.reduce((n, q) => {
         const correct = new Set(q.correct.split(",").map((s) => s.trim()));
@@ -142,14 +155,37 @@ function QuizSession({
         return n + (setsEqual(given, correct) ? 1 : 0);
       }, 0);
 
+      // Save session + update wrong_stack (fire-and-forget, fails silently on Vercel)
+      const answeredQuestions = questions.filter((q) => finalAnswers[q.id] !== undefined);
+      fetch("/api/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode,
+          score,
+          total: answeredQuestions.length,
+          passed: score / total >= 0.7,
+          answers: answeredQuestions.map((q) => {
+            const correct = new Set(q.correct.split(",").map((s) => s.trim()));
+            const given = new Set((finalAnswers[q.id] ?? "").split(",").filter(Boolean));
+            return {
+              questionId: q.id,
+              selected: finalAnswers[q.id] ?? "",
+              isCorrect: setsEqual(given, correct),
+              section: q.section,
+            };
+          }),
+        }),
+      }).catch(() => {});
+
       router.push(
         `/results?score=${score}&total=${total}&passed=${score / total >= 0.7}&mode=${mode}`
       );
     },
-    [questions, total, mode, router]
+    [questions, total, mode, isLearn, router]
   );
 
-  // ── Timer (exam only) ──────────────────────────────────────────────────────
+  // ── Timer ─────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!cfg.timerSecs) return;
@@ -161,13 +197,21 @@ function QuizSession({
     return () => clearInterval(id);
   }, [secondsLeft, cfg.timerSecs, finishQuiz]);
 
-  // ── Navigation ─────────────────────────────────────────────────────────────
+  // ── Navigation ────────────────────────────────────────────────────────────
 
-  // Remove current question from queue and advance (answer committed)
   const advanceQueue = (ans: Record<number, string>) => {
     const next = queue.slice(1);
     if (next.length === 0) {
-      finishQuiz(ans);
+      if (isLearn) {
+        // Loop: reset to all questions
+        localStorage.removeItem(LEARN_QUEUE_KEY);
+        setQueue(questions.map((_, i) => i));
+        setSelected(new Set());
+        setPhase("answering");
+        answersRef.current = {};
+      } else {
+        finishQuiz(ans);
+      }
     } else {
       setQueue(next);
       setSelected(new Set());
@@ -175,8 +219,8 @@ function QuizSession({
     }
   };
 
-  // Skip: move current question to the back of the queue, no answer recorded
   const handleSkip = () => {
+    // Move current to back, no answer stored
     setQueue((q) => [...q.slice(1), q[0]]);
     setSelected(new Set());
     setPhase("answering");
@@ -185,7 +229,6 @@ function QuizSession({
   const handleWeiter = () => {
     const ansStr = [...selected].sort().join(",");
     answersRef.current = { ...answersRef.current, [question.id]: ansStr };
-
     if (cfg.feedback) {
       setPhase("revealed");
     } else {
@@ -195,6 +238,38 @@ function QuizSession({
 
   const handleNaechste = () => {
     advanceQueue(answersRef.current);
+  };
+
+  const handleHome = () => {
+    // Learn mode: state is already saved to localStorage, just navigate
+    if (isLearn) {
+      router.push("/");
+      return;
+    }
+    // Other modes: confirm if any progress exists
+    if (
+      Object.keys(answersRef.current).length > 0 &&
+      !window.confirm("Quiz verlassen? Fortschritt geht verloren.")
+    ) {
+      return;
+    }
+    router.push("/");
+  };
+
+  const handleToggleFlag = () => {
+    const qid = question.id;
+    setFlaggedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(qid)) next.delete(qid);
+      else next.add(qid);
+      return next;
+    });
+    // Persist to DB (fire-and-forget)
+    fetch("/api/flagged", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ questionId: qid }),
+    }).catch(() => {});
   };
 
   const toggleAnswer = (letter: string) => {
@@ -212,12 +287,10 @@ function QuizSession({
     });
   };
 
-  // ── Answer state for rendering ─────────────────────────────────────────────
+  // ── Answer state ──────────────────────────────────────────────────────────
 
   const answerState = (letter: string): AnswerState => {
-    if (phase !== "revealed") {
-      return selected.has(letter) ? "selected" : "idle";
-    }
+    if (phase !== "revealed") return selected.has(letter) ? "selected" : "idle";
     const isCorrect = correctSet.has(letter);
     const wasSelected = selected.has(letter);
     if (isCorrect && wasSelected) return "correct";
@@ -226,10 +299,9 @@ function QuizSession({
     return "idle";
   };
 
-  const isAnswerCorrect =
-    phase === "revealed" && setsEqual(selected, correctSet);
+  const isAnswerCorrect = phase === "revealed" && setsEqual(selected, correctSet);
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="flex min-h-screen flex-col bg-pcap-bg text-pcap-text">
@@ -240,11 +312,11 @@ function QuizSession({
           <div className="mb-2 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <button
-                onClick={() => router.push("/")}
+                onClick={handleHome}
                 className="text-xs text-pcap-muted transition-colors hover:text-pcap-text"
                 title="Zur Startseite"
               >
-                ← Abbrechen
+                🏠 Home
               </button>
               <span className="text-pcap-border">|</span>
               <span className="text-xs text-pcap-muted">
@@ -252,13 +324,11 @@ function QuizSession({
                 {" / "}
                 {total}
                 {queue.length > 1 && answered < total && (
-                  <span className="ml-1 text-pcap-muted">
+                  <span className="ml-1">
                     ({queue.length - 1} ausstehend)
                   </span>
                 )}
-                <span className={`ml-2 font-medium ${cfg.color}`}>
-                  · {cfg.label}
-                </span>
+                <span className={`ml-2 font-medium ${cfg.color}`}>· {cfg.label}</span>
               </span>
             </div>
             {cfg.timerSecs > 0 && (
@@ -276,16 +346,31 @@ function QuizSession({
       <div className="flex-1 px-5 py-6">
         <div className="mx-auto max-w-xl space-y-4">
 
-          <div className="flex items-center gap-2">
-            <span className="rounded-md bg-pcap-blue-dim px-2 py-0.5 text-xs font-medium text-pcap-blue">
-              {question.section}
-            </span>
-            <span className="text-xs text-pcap-muted">#{question.q_number}</span>
-            {question.multi && (
-              <span className="rounded-md bg-pcap-orange-dim px-2 py-0.5 text-xs font-medium text-pcap-orange">
-                Mehrfachauswahl
+          {/* Badges row + flag button */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="rounded-md bg-pcap-blue-dim px-2 py-0.5 text-xs font-medium text-pcap-blue">
+                {question.section}
               </span>
-            )}
+              <span className="text-xs text-pcap-muted">#{question.q_number}</span>
+              {question.multi && (
+                <span className="rounded-md bg-pcap-orange-dim px-2 py-0.5 text-xs font-medium text-pcap-orange">
+                  Mehrfachauswahl
+                </span>
+              )}
+            </div>
+            {/* Flag / Unsicher button */}
+            <button
+              onClick={handleToggleFlag}
+              title={isFlagged ? "Markierung entfernen" : "Als unsicher markieren"}
+              className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors ${
+                isFlagged
+                  ? "border-pcap-orange bg-pcap-orange-dim text-pcap-orange"
+                  : "border-pcap-border text-pcap-muted hover:border-pcap-orange hover:text-pcap-orange"
+              }`}
+            >
+              🚩 {isFlagged ? "Unsicher" : "Markieren"}
+            </button>
           </div>
 
           <p className="text-sm leading-relaxed text-pcap-text">{question.text}</p>
@@ -303,7 +388,6 @@ function QuizSession({
             ))}
           </div>
 
-          {/* Feedback label in learn mode */}
           {phase === "revealed" && (
             <div
               className={`rounded-lg border px-4 py-3 text-sm font-medium ${
@@ -312,7 +396,9 @@ function QuizSession({
                   : "border-pcap-red bg-pcap-red-dim text-pcap-red"
               }`}
             >
-              {isAnswerCorrect ? "✓ Richtig!" : "✗ Falsch — richtige Antwort(en) sind grün markiert"}
+              {isAnswerCorrect
+                ? "✓ Richtig!"
+                : "✗ Falsch — richtige Antwort(en) sind grün markiert"}
             </div>
           )}
 
@@ -332,9 +418,7 @@ function QuizSession({
           ) : (
             <span className="text-xs text-pcap-muted">
               {phase === "revealed"
-                ? isAnswerCorrect
-                  ? "✓ Richtig!"
-                  : "✗ Falsch"
+                ? isAnswerCorrect ? "✓ Richtig!" : "✗ Falsch"
                 : question.multi
                 ? `${selected.size} Antwort${selected.size > 1 ? "en" : ""} ausgewählt`
                 : "Antwort ausgewählt"}
@@ -345,7 +429,7 @@ function QuizSession({
               onClick={handleNaechste}
               className="rounded-lg bg-pcap-blue px-6 py-2.5 text-sm font-bold text-pcap-bg transition-opacity hover:opacity-80"
             >
-              {isLast ? "Auswertung →" : "Nächste →"}
+              {isLast && !isLearn ? "Auswertung →" : "Nächste →"}
             </button>
           ) : (
             <button
@@ -363,7 +447,7 @@ function QuizSession({
   );
 }
 
-// ── Public component (wrapped in Suspense for useSearchParams) ────────────────
+// ── Loader ─────────────────────────────────────────────────────────────────────
 
 function QuizClientInner({ mode }: { mode: string }) {
   const router = useRouter();
@@ -371,11 +455,9 @@ function QuizClientInner({ mode }: { mode: string }) {
   const [questions, setQuestions] = useState<QuizQuestion[] | null>(null);
   const [error, setError] = useState(false);
 
-  // Quicktest params from URL: ?n=15&mins=20
   const qtN    = mode === "quicktest" ? parseInt(searchParams.get("n")    ?? "15", 10) : 40;
   const qtMins = mode === "quicktest" ? parseInt(searchParams.get("mins") ?? "20", 10) : 0;
 
-  // Override timerSecs for quicktest based on URL param
   if (mode === "quicktest") {
     MODE_CONFIG.quicktest.timerSecs = qtMins * 60;
   }
@@ -385,10 +467,7 @@ function QuizClientInner({ mode }: { mode: string }) {
       ? `/api/questions?mode=quicktest&limit=${qtN}`
       : `/api/questions?mode=${encodeURIComponent(mode)}`;
     fetch(url)
-      .then((r) => {
-        if (!r.ok) throw new Error(r.statusText);
-        return r.json();
-      })
+      .then((r) => { if (!r.ok) throw new Error(r.statusText); return r.json(); })
       .then((data: unknown) => {
         if (Array.isArray(data)) setQuestions(data as QuizQuestion[]);
         else setError(true);
@@ -405,7 +484,7 @@ function QuizClientInner({ mode }: { mode: string }) {
           onClick={() => router.push("/")}
           className="mt-4 rounded-lg bg-pcap-blue px-5 py-2 text-sm font-bold text-pcap-bg"
         >
-          ← Zurück
+          🏠 Home
         </button>
       </CenteredScreen>
     );
@@ -414,7 +493,7 @@ function QuizClientInner({ mode }: { mode: string }) {
   if (!questions) {
     return (
       <CenteredScreen>
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-pcap-border border-t-pcap-blue mx-auto" />
+        <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-pcap-border border-t-pcap-blue" />
         <p className="mt-3 text-sm text-pcap-muted">Fragen werden geladen…</p>
       </CenteredScreen>
     );
@@ -425,17 +504,13 @@ function QuizClientInner({ mode }: { mode: string }) {
     return (
       <CenteredScreen>
         <p className="text-3xl">📭</p>
-        <p className="mt-2 font-bold text-pcap-text">
-          {cfg?.label ?? mode} ist leer
-        </p>
-        <p className="mt-1 text-sm text-pcap-muted">
-          Noch keine Fragen in diesem Stapel.
-        </p>
+        <p className="mt-2 font-bold text-pcap-text">{cfg?.label ?? mode} ist leer</p>
+        <p className="mt-1 text-sm text-pcap-muted">Noch keine Fragen in diesem Stapel.</p>
         <button
           onClick={() => router.push("/")}
           className="mt-4 rounded-lg bg-pcap-blue px-5 py-2 text-sm font-bold text-pcap-bg"
         >
-          ← Zurück
+          🏠 Home
         </button>
       </CenteredScreen>
     );
@@ -449,7 +524,7 @@ export function QuizClient({ mode }: { mode: string }) {
     <Suspense
       fallback={
         <CenteredScreen>
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-pcap-border border-t-pcap-blue mx-auto" />
+          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-pcap-border border-t-pcap-blue" />
           <p className="mt-3 text-sm text-pcap-muted">Fragen werden geladen…</p>
         </CenteredScreen>
       }
