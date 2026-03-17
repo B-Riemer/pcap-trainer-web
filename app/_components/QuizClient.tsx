@@ -1,18 +1,17 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useCallback, useRef, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { QuizQuestion } from "@/lib/db";
 
 // ── Mode config ────────────────────────────────────────────────────────────────
-
-type Mode = "exam" | "learn" | "wrong-stack" | "flagged";
 
 const MODE_CONFIG: Record<string, { label: string; timerSecs: number; feedback: boolean; color: string }> = {
   exam:         { label: "Prüfungsmodus",  timerSecs: 65 * 60, feedback: false, color: "text-pcap-blue" },
   learn:        { label: "Lernmodus",      timerSecs: 0,       feedback: true,  color: "text-pcap-green" },
   "wrong-stack":{ label: "Falsch-Stapel",  timerSecs: 0,       feedback: true,  color: "text-pcap-red" },
   flagged:      { label: "Unsicher-Stapel",timerSecs: 0,       feedback: true,  color: "text-pcap-orange" },
+  quicktest:    { label: "Schnelltest",    timerSecs: 0,       feedback: false, color: "text-pcap-orange" },
 };
 
 function setsEqual(a: Set<string>, b: Set<string>) {
@@ -300,17 +299,24 @@ function QuizSession({
       {/* Bottom bar */}
       <div className="sticky bottom-0 border-t border-pcap-border bg-pcap-bg px-5 py-4">
         <div className="mx-auto flex max-w-xl items-center justify-between">
-          <span className="text-xs text-pcap-muted">
-            {phase === "revealed"
-              ? isAnswerCorrect
-                ? "Weiter zur nächsten Frage"
-                : "Zur nächsten Frage"
-              : selected.size === 0
-              ? "Keine Auswahl — Frage überspringen"
-              : question.multi
-              ? `${selected.size} Antwort${selected.size > 1 ? "en" : ""} ausgewählt`
-              : "Antwort ausgewählt"}
-          </span>
+          {phase !== "revealed" && selected.size === 0 ? (
+            <button
+              onClick={handleWeiter}
+              className="text-xs text-pcap-muted underline-offset-2 hover:text-pcap-text hover:underline"
+            >
+              Frage überspringen →
+            </button>
+          ) : (
+            <span className="text-xs text-pcap-muted">
+              {phase === "revealed"
+                ? isAnswerCorrect
+                  ? "Weiter zur nächsten Frage"
+                  : "Zur nächsten Frage"
+                : question.multi
+                ? `${selected.size} Antwort${selected.size > 1 ? "en" : ""} ausgewählt`
+                : "Antwort ausgewählt"}
+            </span>
+          )}
           {phase === "revealed" ? (
             <button
               onClick={handleNaechste}
@@ -333,15 +339,28 @@ function QuizSession({
   );
 }
 
-// ── Public component ───────────────────────────────────────────────────────────
+// ── Public component (wrapped in Suspense for useSearchParams) ────────────────
 
-export function QuizClient({ mode }: { mode: string }) {
+function QuizClientInner({ mode }: { mode: string }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [questions, setQuestions] = useState<QuizQuestion[] | null>(null);
   const [error, setError] = useState(false);
 
+  // Quicktest params from URL: ?n=15&mins=20
+  const qtN    = mode === "quicktest" ? parseInt(searchParams.get("n")    ?? "15", 10) : 40;
+  const qtMins = mode === "quicktest" ? parseInt(searchParams.get("mins") ?? "20", 10) : 0;
+
+  // Override timerSecs for quicktest based on URL param
+  if (mode === "quicktest") {
+    MODE_CONFIG.quicktest.timerSecs = qtMins * 60;
+  }
+
   useEffect(() => {
-    fetch(`/api/questions?mode=${encodeURIComponent(mode)}`)
+    const url = mode === "quicktest"
+      ? `/api/questions?mode=quicktest&limit=${qtN}`
+      : `/api/questions?mode=${encodeURIComponent(mode)}`;
+    fetch(url)
       .then((r) => {
         if (!r.ok) throw new Error(r.statusText);
         return r.json();
@@ -351,7 +370,7 @@ export function QuizClient({ mode }: { mode: string }) {
         else setError(true);
       })
       .catch(() => setError(true));
-  }, [mode]);
+  }, [mode, qtN]);
 
   if (error) {
     return (
@@ -399,4 +418,19 @@ export function QuizClient({ mode }: { mode: string }) {
   }
 
   return <QuizSession questions={questions} mode={mode} />;
+}
+
+export function QuizClient({ mode }: { mode: string }) {
+  return (
+    <Suspense
+      fallback={
+        <CenteredScreen>
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-pcap-border border-t-pcap-blue mx-auto" />
+          <p className="mt-3 text-sm text-pcap-muted">Fragen werden geladen…</p>
+        </CenteredScreen>
+      }
+    >
+      <QuizClientInner mode={mode} />
+    </Suspense>
+  );
 }

@@ -22,6 +22,8 @@ export async function GET(req: NextRequest) {
         return NextResponse.json(getWrongStackQuestions());
       case "flagged":
         return NextResponse.json(getFlaggedQuestions());
+      case "quicktest":
+        return NextResponse.json(getExamQuestions(limit));
       default:
         return NextResponse.json({ error: "Unknown mode" }, { status: 400 });
     }

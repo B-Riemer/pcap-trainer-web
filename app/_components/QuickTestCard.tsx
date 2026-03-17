@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 const QT_COUNTS = [10, 15, 20] as const;
 const QT_TIMES  = [15, 20, 30] as const;
@@ -35,6 +36,7 @@ function ToggleGroup<T extends number>({
 }
 
 export function QuickTestCard() {
+  const router = useRouter();
   const [qtN, setQtN]       = useState<(typeof QT_COUNTS)[number]>(15);
   const [qtMins, setQtMins] = useState<(typeof QT_TIMES)[number]>(20);
 
@@ -60,7 +62,10 @@ export function QuickTestCard() {
           onSelect={setQtMins}
           formatLabel={(v) => `${v} min`}
         />
-        <button className="ml-auto rounded-md bg-pcap-orange px-4 py-1.5 text-xs font-bold text-pcap-bg transition-opacity hover:opacity-80">
+        <button
+          onClick={() => router.push(`/quiz/quicktest?n=${qtN}&mins=${qtMins}`)}
+          className="ml-auto rounded-md bg-pcap-orange px-4 py-1.5 text-xs font-bold text-pcap-bg transition-opacity hover:opacity-80"
+        >
           Start →
         </button>
       </div>
