@@ -113,16 +113,20 @@ function QuizSession({
   const router = useRouter();
   const cfg = MODE_CONFIG[mode] ?? MODE_CONFIG.exam;
 
-  const [idx, setIdx] = useState(0);
+  const total = questions.length;
+
+  // Queue of question indices — skip moves current to the back
+  const [queue, setQueue] = useState<number[]>(() => questions.map((_, i) => i));
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [phase, setPhase] = useState<"answering" | "revealed">("answering");
   const [secondsLeft, setSecondsLeft] = useState(cfg.timerSecs);
   const finishedRef = useRef(false);
   const answersRef = useRef<Record<number, string>>({});
 
-  const question = questions[idx];
-  const total = questions.length;
-  const isLast = idx === total - 1;
+  const currentIdx = queue[0];
+  const question = questions[currentIdx];
+  const answered = total - queue.length;         // how many have been answered
+  const isLast = queue.length === 1;             // last remaining in queue
   const correctSet = new Set(question.correct.split(",").map((s) => s.trim()));
 
   // ── Finish ─────────────────────────────────────────────────────────────────
@@ -159,31 +163,38 @@ function QuizSession({
 
   // ── Navigation ─────────────────────────────────────────────────────────────
 
-  const commitAndAdvance = (ans: Record<number, string>) => {
-    if (isLast) {
+  // Remove current question from queue and advance (answer committed)
+  const advanceQueue = (ans: Record<number, string>) => {
+    const next = queue.slice(1);
+    if (next.length === 0) {
       finishQuiz(ans);
     } else {
-      setIdx((i) => i + 1);
+      setQueue(next);
       setSelected(new Set());
       setPhase("answering");
     }
   };
 
+  // Skip: move current question to the back of the queue, no answer recorded
+  const handleSkip = () => {
+    setQueue((q) => [...q.slice(1), q[0]]);
+    setSelected(new Set());
+    setPhase("answering");
+  };
+
   const handleWeiter = () => {
     const ansStr = [...selected].sort().join(",");
-    const updated = { ...answersRef.current, [question.id]: ansStr };
-    answersRef.current = updated;
+    answersRef.current = { ...answersRef.current, [question.id]: ansStr };
 
     if (cfg.feedback) {
-      // reveal → wait for second click
       setPhase("revealed");
     } else {
-      commitAndAdvance(updated);
+      advanceQueue(answersRef.current);
     }
   };
 
   const handleNaechste = () => {
-    commitAndAdvance(answersRef.current);
+    advanceQueue(answersRef.current);
   };
 
   const toggleAnswer = (letter: string) => {
@@ -215,8 +226,6 @@ function QuizSession({
     return "idle";
   };
 
-  // ── Score tracking for learn mode feedback label ───────────────────────────
-
   const isAnswerCorrect =
     phase === "revealed" && setsEqual(selected, correctSet);
 
@@ -229,15 +238,29 @@ function QuizSession({
       <div className="sticky top-0 z-10 border-b border-pcap-border bg-pcap-bg px-5 py-3">
         <div className="mx-auto max-w-xl">
           <div className="mb-2 flex items-center justify-between">
-            <span className="text-xs text-pcap-muted">
-              Frage{" "}
-              <span className="font-bold text-pcap-text">{idx + 1}</span>
-              {" / "}
-              {total}
-              <span className={`ml-2 font-medium ${cfg.color}`}>
-                · {cfg.label}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => router.push("/")}
+                className="text-xs text-pcap-muted transition-colors hover:text-pcap-text"
+                title="Zur Startseite"
+              >
+                ← Abbrechen
+              </button>
+              <span className="text-pcap-border">|</span>
+              <span className="text-xs text-pcap-muted">
+                <span className="font-bold text-pcap-text">{answered}</span>
+                {" / "}
+                {total}
+                {queue.length > 1 && answered < total && (
+                  <span className="ml-1 text-pcap-muted">
+                    ({queue.length - 1} ausstehend)
+                  </span>
+                )}
+                <span className={`ml-2 font-medium ${cfg.color}`}>
+                  · {cfg.label}
+                </span>
               </span>
-            </span>
+            </div>
             {cfg.timerSecs > 0 && (
               <div className="flex items-center gap-1.5">
                 <span className="text-xs text-pcap-muted">⏱</span>
@@ -245,7 +268,7 @@ function QuizSession({
               </div>
             )}
           </div>
-          <ProgressBar current={idx + 1} total={total} />
+          <ProgressBar current={answered} total={total} />
         </div>
       </div>
 
@@ -301,17 +324,17 @@ function QuizSession({
         <div className="mx-auto flex max-w-xl items-center justify-between">
           {phase !== "revealed" && selected.size === 0 ? (
             <button
-              onClick={handleWeiter}
+              onClick={handleSkip}
               className="text-xs text-pcap-muted underline-offset-2 hover:text-pcap-text hover:underline"
             >
-              Frage überspringen →
+              Überspringen → hinten anstellen
             </button>
           ) : (
             <span className="text-xs text-pcap-muted">
               {phase === "revealed"
                 ? isAnswerCorrect
-                  ? "Weiter zur nächsten Frage"
-                  : "Zur nächsten Frage"
+                  ? "✓ Richtig!"
+                  : "✗ Falsch"
                 : question.multi
                 ? `${selected.size} Antwort${selected.size > 1 ? "en" : ""} ausgewählt`
                 : "Antwort ausgewählt"}
@@ -327,7 +350,8 @@ function QuizSession({
           ) : (
             <button
               onClick={handleWeiter}
-              className="rounded-lg bg-pcap-blue px-6 py-2.5 text-sm font-bold text-pcap-bg transition-opacity hover:opacity-80"
+              disabled={selected.size === 0}
+              className="rounded-lg bg-pcap-blue px-6 py-2.5 text-sm font-bold text-pcap-bg transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-30"
             >
               {isLast && !cfg.feedback ? "Auswertung →" : "Weiter →"}
             </button>
