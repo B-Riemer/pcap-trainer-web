@@ -1,14 +1,7 @@
-"use client";
+import { getStats } from "@/lib/db";
+import { QuickTestCard } from "./_components/QuickTestCard";
 
-import { useState } from "react";
-
-// ── Dummy data (replace with real API later) ──────────────────────────────────
-
-const DUMMY_STATS = {
-  totalQuestions: 191,
-  wrongStack: 12,
-  flaggedStack: 5,
-};
+// ── Static data ───────────────────────────────────────────────────────────────
 
 const SECTIONS = [
   { name: "OOP",           pct: 34, color: "bg-pcap-blue" },
@@ -18,29 +11,20 @@ const SECTIONS = [
   { name: "Module/Pakete", pct: 12, color: "bg-pcap-muted" },
 ];
 
-const QT_COUNTS = [10, 15, 20];
-const QT_TIMES  = [15, 20, 30];
-
-// ── Sub-components ────────────────────────────────────────────────────────────
+// ── Shared UI primitives ──────────────────────────────────────────────────────
 
 function Card({ children, coloredBorder }: {
   children: React.ReactNode;
   coloredBorder?: string;
 }) {
   return (
-    <div
-      className={`rounded-xl border bg-pcap-surface p-5 ${
-        coloredBorder ?? "border-pcap-border"
-      }`}
-    >
+    <div className={`rounded-xl border bg-pcap-surface p-5 ${coloredBorder ?? "border-pcap-border"}`}>
       {children}
     </div>
   );
 }
 
-function ModeCard({
-  icon, title, lines, titleColor, btnBg,
-}: {
+function ModeCard({ icon, title, lines, titleColor, btnBg }: {
   icon: string;
   title: string;
   lines: string[];
@@ -55,42 +39,11 @@ function ModeCard({
         {lines.map((l) => (
           <p key={l} className="mt-0.5 text-xs text-pcap-muted">{l}</p>
         ))}
-        <button
-          className={`mt-4 w-full rounded-lg py-2 text-sm font-bold text-pcap-bg transition-opacity hover:opacity-80 ${btnBg}`}
-        >
+        <button className={`mt-4 w-full rounded-lg py-2 text-sm font-bold text-pcap-bg transition-opacity hover:opacity-80 ${btnBg}`}>
           Starten →
         </button>
       </div>
     </Card>
-  );
-}
-
-function ToggleGroup<T extends number>({
-  label, values, selected, onSelect, formatLabel,
-}: {
-  label: string;
-  values: T[];
-  selected: T;
-  onSelect: (v: T) => void;
-  formatLabel?: (v: T) => string;
-}) {
-  return (
-    <div className="flex items-center gap-1.5">
-      <span className="w-10 shrink-0 text-xs text-pcap-muted">{label}</span>
-      {values.map((v) => (
-        <button
-          key={v}
-          onClick={() => onSelect(v)}
-          className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-            v === selected
-              ? "bg-pcap-orange text-pcap-bg"
-              : "bg-pcap-border text-pcap-text hover:bg-pcap-muted/30"
-          }`}
-        >
-          {formatLabel ? formatLabel(v) : v}
-        </button>
-      ))}
-    </div>
   );
 }
 
@@ -99,23 +52,17 @@ function SectionBar({ name, pct, color }: { name: string; pct: number; color: st
     <div className="flex items-center gap-2">
       <span className="w-28 shrink-0 text-xs text-pcap-text">{name}</span>
       <div className="h-1.5 flex-1 rounded-full bg-pcap-bg">
-        <div
-          className={`h-full rounded-full ${color}`}
-          style={{ width: `${pct}%` }}
-        />
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
       </div>
       <span className="w-8 text-right text-xs text-pcap-muted">{pct} %</span>
     </div>
   );
 }
 
-// ── Main page ─────────────────────────────────────────────────────────────────
+// ── Page (Server Component) ───────────────────────────────────────────────────
 
-export default function Home() {
-  const [qtN, setQtN]       = useState(15);
-  const [qtMins, setQtMins] = useState(20);
-
-  const { totalQuestions, wrongStack, flaggedStack } = DUMMY_STATS;
+export default async function Home() {
+  const { totalQuestions, wrongStack, flaggedStack, lastSession } = getStats();
 
   return (
     <div className="min-h-screen bg-pcap-bg font-sans text-pcap-text">
@@ -142,40 +89,15 @@ export default function Home() {
           <ModeCard
             icon="📖"
             title="Lernmodus"
-            lines={["Alle 191 Fragen", "Kein Timer · Sofort-Feedback"]}
+            lines={[`Alle ${totalQuestions} Fragen`, "Kein Timer · Sofort-Feedback"]}
             titleColor="text-pcap-green"
             btnBg="bg-pcap-green"
           />
         </div>
 
-        {/* ── Schnelltest ── */}
+        {/* ── Schnelltest (Client Component für Toggles) ── */}
         <div className="mb-3">
-          <Card>
-            <div className="mb-3 flex items-baseline gap-3">
-              <h2 className="text-base font-bold text-pcap-orange">⚡ Schnelltest</h2>
-              <span className="text-xs text-pcap-muted">
-                Zufällige Fragen · mit Timer · wie Prüfungsmodus
-              </span>
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <ToggleGroup
-                label="Fragen:"
-                values={QT_COUNTS}
-                selected={qtN}
-                onSelect={setQtN}
-              />
-              <ToggleGroup
-                label="Zeit:"
-                values={QT_TIMES}
-                selected={qtMins}
-                onSelect={setQtMins}
-                formatLabel={(v) => `${v} min`}
-              />
-              <button className="ml-auto rounded-md bg-pcap-orange px-4 py-1.5 text-xs font-bold text-pcap-bg transition-opacity hover:opacity-80">
-                Start →
-              </button>
-            </div>
-          </Card>
+          <QuickTestCard />
         </div>
 
         {/* ── Falsch-Stapel ── */}
@@ -237,18 +159,16 @@ export default function Home() {
 
         {/* ── Statistik ── */}
         <Card>
-          <p className="mb-3 text-xs font-bold tracking-widest text-pcap-blue">
-            STATISTIK
-          </p>
+          <p className="mb-3 text-xs font-bold tracking-widest text-pcap-blue">STATISTIK</p>
 
           <div className="space-y-2">
-            {[
+            {([
               ["Fragen gesamt",      String(totalQuestions)],
               ["Im Falsch-Stapel",   String(wrongStack)],
               ["Im Unsicher-Stapel", String(flaggedStack)],
               ["Bestehensgrenze",    "70 %"],
               ["Prüfung",            "40 Fragen · 65 Minuten"],
-            ].map(([label, value]) => (
+            ] as [string, string][]).map(([label, value]) => (
               <div key={label} className="flex justify-between">
                 <span className="text-sm text-pcap-muted">{label}</span>
                 <span className="text-sm font-bold text-pcap-text">{value}</span>
@@ -256,11 +176,29 @@ export default function Home() {
             ))}
           </div>
 
+          {lastSession && (
+            <>
+              <div className="my-4 border-t border-pcap-border" />
+              <p className="mb-3 text-xs font-bold tracking-widest text-pcap-blue">LETZTE SESSION</p>
+              <div className="space-y-2">
+                {([
+                  ["Datum",   lastSession.date],
+                  ["Modus",   lastSession.mode],
+                  ["Ergebnis", `${lastSession.score} / ${lastSession.total}`],
+                  ["Bestanden", lastSession.passed ? "✅ Ja" : "❌ Nein"],
+                ] as [string, string][]).map(([label, value]) => (
+                  <div key={label} className="flex justify-between">
+                    <span className="text-sm text-pcap-muted">{label}</span>
+                    <span className="text-sm font-bold text-pcap-text">{value}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
           <div className="my-4 border-t border-pcap-border" />
 
-          <p className="mb-3 text-xs font-bold tracking-widest text-pcap-blue">
-            PRÜFUNGSANTEILE
-          </p>
+          <p className="mb-3 text-xs font-bold tracking-widest text-pcap-blue">PRÜFUNGSANTEILE</p>
           <div className="space-y-2.5">
             {SECTIONS.map((s) => (
               <SectionBar key={s.name} {...s} />
