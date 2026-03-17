@@ -104,26 +104,70 @@ function shuffle<T>(arr: T[]): T[] {
   return arr;
 }
 
+function mapRow(row: DbQuestionRow): QuizQuestion {
+  return {
+    id: row.id,
+    q_number: row.q_number,
+    text: row.text,
+    section: row.section,
+    answers: shuffle(
+      JSON.parse(row.answers_json) as { letter: string; text: string }[]
+    ),
+    correct: row.correct,
+    multi: row.multi === 1,
+  };
+}
+
 export function getExamQuestions(n = 40): QuizQuestion[] {
   const db = openDb();
   try {
     const rows = db
       .prepare("SELECT * FROM questions ORDER BY RANDOM() LIMIT ?")
       .all(n) as unknown as DbQuestionRow[];
+    return rows.map(mapRow);
+  } finally {
+    db.close();
+  }
+}
 
-    return shuffle(
-      rows.map((row) => ({
-        id: row.id,
-        q_number: row.q_number,
-        text: row.text,
-        section: row.section,
-        answers: shuffle(
-          JSON.parse(row.answers_json) as { letter: string; text: string }[]
-        ),
-        correct: row.correct,
-        multi: row.multi === 1,
-      }))
-    );
+export function getLearnQuestions(): QuizQuestion[] {
+  const db = openDb();
+  try {
+    const rows = db
+      .prepare("SELECT * FROM questions ORDER BY q_number ASC")
+      .all() as unknown as DbQuestionRow[];
+    return rows.map(mapRow);
+  } finally {
+    db.close();
+  }
+}
+
+export function getWrongStackQuestions(): QuizQuestion[] {
+  const db = openDb();
+  try {
+    const rows = db
+      .prepare(
+        `SELECT q.* FROM questions q
+         JOIN wrong_stack ws ON ws.question_id = q.id
+         ORDER BY ws.times_wrong DESC`
+      )
+      .all() as unknown as DbQuestionRow[];
+    return rows.map(mapRow);
+  } finally {
+    db.close();
+  }
+}
+
+export function getFlaggedQuestions(): QuizQuestion[] {
+  const db = openDb();
+  try {
+    const rows = db
+      .prepare(
+        `SELECT q.* FROM questions q
+         JOIN flagged_stack fs ON fs.question_id = q.id`
+      )
+      .all() as unknown as DbQuestionRow[];
+    return rows.map(mapRow);
   } finally {
     db.close();
   }

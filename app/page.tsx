@@ -101,6 +101,7 @@ export default async function Home() {
             lines={[`Alle ${totalQuestions} Fragen`, "Kein Timer · Sofort-Feedback"]}
             titleColor="text-pcap-green"
             btnBg="bg-pcap-green"
+            href="/quiz/learn"
           />
         </div>
 
@@ -124,12 +125,21 @@ export default async function Home() {
                 </p>
               </div>
               <div className="ml-4 flex shrink-0 items-center gap-2">
-                <button
-                  disabled={wrongStack === 0}
-                  className="rounded-lg bg-pcap-red px-4 py-2 text-sm font-bold text-pcap-bg transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-30"
-                >
-                  Üben →
-                </button>
+                {wrongStack > 0 ? (
+                  <Link
+                    href="/quiz/wrong-stack"
+                    className="rounded-lg bg-pcap-red px-4 py-2 text-sm font-bold text-pcap-bg transition-opacity hover:opacity-80"
+                  >
+                    Üben →
+                  </Link>
+                ) : (
+                  <button
+                    disabled
+                    className="rounded-lg bg-pcap-red px-4 py-2 text-sm font-bold text-pcap-bg disabled:cursor-not-allowed disabled:opacity-30"
+                  >
+                    Üben →
+                  </button>
+                )}
                 <button
                   disabled={wrongStack === 0}
                   title="Stapel zurücksetzen"
@@ -156,12 +166,21 @@ export default async function Home() {
                     : "Noch keine markierten Fragen"}
                 </p>
               </div>
-              <button
-                disabled={flaggedStack === 0}
-                className="ml-4 shrink-0 rounded-lg bg-pcap-orange px-4 py-2 text-sm font-bold text-pcap-bg transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-30"
-              >
-                Üben →
-              </button>
+              {flaggedStack > 0 ? (
+                <Link
+                  href="/quiz/flagged"
+                  className="ml-4 shrink-0 rounded-lg bg-pcap-orange px-4 py-2 text-sm font-bold text-pcap-bg transition-opacity hover:opacity-80"
+                >
+                  Üben →
+                </Link>
+              ) : (
+                <button
+                  disabled
+                  className="ml-4 shrink-0 rounded-lg bg-pcap-orange px-4 py-2 text-sm font-bold text-pcap-bg disabled:cursor-not-allowed disabled:opacity-30"
+                >
+                  Üben →
+                </button>
+              )}
             </div>
           </Card>
         </div>
