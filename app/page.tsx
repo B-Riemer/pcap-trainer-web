@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getStats } from "@/lib/db";
 import { QuickTestCard } from "./_components/QuickTestCard";
 
@@ -24,12 +25,13 @@ function Card({ children, coloredBorder }: {
   );
 }
 
-function ModeCard({ icon, title, lines, titleColor, btnBg }: {
+function ModeCard({ icon, title, lines, titleColor, btnBg, href }: {
   icon: string;
   title: string;
   lines: string[];
   titleColor: string;
   btnBg: string;
+  href?: string;
 }) {
   return (
     <Card>
@@ -39,9 +41,15 @@ function ModeCard({ icon, title, lines, titleColor, btnBg }: {
         {lines.map((l) => (
           <p key={l} className="mt-0.5 text-xs text-pcap-muted">{l}</p>
         ))}
-        <button className={`mt-4 w-full rounded-lg py-2 text-sm font-bold text-pcap-bg transition-opacity hover:opacity-80 ${btnBg}`}>
-          Starten →
-        </button>
+        {href ? (
+          <Link href={href} className={`mt-4 block w-full rounded-lg py-2 text-center text-sm font-bold text-pcap-bg transition-opacity hover:opacity-80 ${btnBg}`}>
+            Starten →
+          </Link>
+        ) : (
+          <button className={`mt-4 w-full rounded-lg py-2 text-sm font-bold text-pcap-bg transition-opacity hover:opacity-80 ${btnBg}`}>
+            Starten →
+          </button>
+        )}
       </div>
     </Card>
   );
@@ -85,6 +93,7 @@ export default async function Home() {
             lines={["40 Fragen · 65 Minuten", "70 % zum Bestehen"]}
             titleColor="text-pcap-blue"
             btnBg="bg-pcap-blue"
+            href="/quiz/exam"
           />
           <ModeCard
             icon="📖"

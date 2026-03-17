@@ -3,6 +3,28 @@ import path from "node:path";
 
 const DB_PATH = path.join(process.cwd(), "data", "pcap.db");
 
+// ── Shared types ──────────────────────────────────────────────────────────────
+
+export interface QuizQuestion {
+  id: number;
+  q_number: number;
+  text: string;
+  section: string;
+  answers: { letter: string; text: string }[];
+  correct: string;   // comma-separated original letters: "A" or "C,D"
+  multi: boolean;
+}
+
+interface DbQuestionRow {
+  id: number;
+  q_number: number;
+  text: string;
+  section: string;
+  answers_json: string;
+  correct: string;
+  multi: number;
+}
+
 /** Opens the database read-only and returns it. Caller is responsible for closing. */
 function openDb(): DatabaseSync {
   return new DatabaseSync(DB_PATH, { readOnly: true });
@@ -67,6 +89,41 @@ export function getStats(): StatsRow {
       : null;
 
     return { totalQuestions, wrongStack, flaggedStack, lastSession };
+  } finally {
+    db.close();
+  }
+}
+
+// ── Quiz questions ─────────────────────────────────────────────────────────────
+
+function shuffle<T>(arr: T[]): T[] {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+export function getExamQuestions(n = 40): QuizQuestion[] {
+  const db = openDb();
+  try {
+    const rows = db
+      .prepare("SELECT * FROM questions ORDER BY RANDOM() LIMIT ?")
+      .all(n) as unknown as DbQuestionRow[];
+
+    return shuffle(
+      rows.map((row) => ({
+        id: row.id,
+        q_number: row.q_number,
+        text: row.text,
+        section: row.section,
+        answers: shuffle(
+          JSON.parse(row.answers_json) as { letter: string; text: string }[]
+        ),
+        correct: row.correct,
+        multi: row.multi === 1,
+      }))
+    );
   } finally {
     db.close();
   }
