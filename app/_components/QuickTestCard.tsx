@@ -63,7 +63,7 @@ export function QuickTestCard() {
           formatLabel={(v) => `${v} min`}
         />
         <button
-          onClick={() => router.push(`/quiz/quicktest?n=${qtN}&mins=${qtMins}`)}
+          onClick={() => router.push(`/quiz/quicktest?questions=${qtN}&time=${qtMins}`)}
           className="ml-auto rounded-md bg-pcap-orange px-4 py-1.5 text-xs font-bold text-pcap-bg transition-opacity hover:opacity-80"
         >
           Start →

@@ -5,14 +5,21 @@ const MODE_LABELS: Record<string, string> = {
   learn:         "Lernmodus",
   "wrong-stack": "Falsch-Stapel",
   flagged:       "Unsicher-Stapel",
+  quicktest:     "Schnelltest",
 };
 
 export default async function ResultsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ score?: string; total?: string; passed?: string; mode?: string }>;
+  searchParams: Promise<{
+    score?: string;
+    total?: string;
+    passed?: string;
+    mode?: string;
+    sections?: string;
+  }>;
 }) {
-  const { score: scoreStr, total: totalStr, passed: passedStr, mode } =
+  const { score: scoreStr, total: totalStr, passed: passedStr, mode, sections: sectionsParam } =
     await searchParams;
 
   const score  = parseInt(scoreStr ?? "0", 10);
@@ -21,6 +28,16 @@ export default async function ResultsPage({
   const pct    = total > 0 ? Math.round((score / total) * 100) : 0;
   const isExam = mode === "exam";
   const label  = MODE_LABELS[mode ?? ""] ?? mode ?? "Quiz";
+
+  let sectionStats: Record<string, { correct: number; total: number }> | null = null;
+  if (sectionsParam) {
+    try {
+      sectionStats = JSON.parse(decodeURIComponent(sectionsParam)) as Record<
+        string,
+        { correct: number; total: number }
+      >;
+    } catch {}
+  }
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-pcap-bg px-5 text-pcap-text">
@@ -86,6 +103,43 @@ export default async function ResultsPage({
             )}
           </div>
         </div>
+
+        {/* Per-section breakdown */}
+        {sectionStats && Object.keys(sectionStats).length > 0 && (
+          <div className="rounded-xl border border-pcap-border bg-pcap-surface p-6">
+            <p className="mb-4 text-xs font-bold tracking-widest text-pcap-blue">PRO BEREICH</p>
+            <div className="space-y-3">
+              {Object.entries(sectionStats).map(([sec, { correct: c, total: t }]) => {
+                const secPct = t > 0 ? Math.round((c / t) * 100) : 0;
+                return (
+                  <div key={sec}>
+                    <div className="mb-1 flex justify-between text-xs">
+                      <span className="text-pcap-text">{sec}</span>
+                      <span className="font-bold text-pcap-muted">
+                        {c}/{t}
+                        <span
+                          className={`ml-1 ${
+                            secPct >= 70 ? "text-pcap-green" : "text-pcap-red"
+                          }`}
+                        >
+                          ({secPct} %)
+                        </span>
+                      </span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-pcap-border">
+                      <div
+                        className={`h-full rounded-full ${
+                          secPct >= 70 ? "bg-pcap-green" : "bg-pcap-red"
+                        }`}
+                        style={{ width: `${secPct}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Actions */}
         <div className="flex gap-3">

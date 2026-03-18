@@ -141,7 +141,7 @@ function QuizSession({ questions, mode }: { questions: QuizQuestion[]; mode: str
   // ── Finish & save session ─────────────────────────────────────────────────
 
   const finishQuiz = useCallback(
-    (finalAnswers: Record<number, string>) => {
+    async (finalAnswers: Record<number, string>) => {
       if (finishedRef.current) return;
       finishedRef.current = true;
 
@@ -155,31 +155,51 @@ function QuizSession({ questions, mode }: { questions: QuizQuestion[]; mode: str
         return n + (setsEqual(given, correct) ? 1 : 0);
       }, 0);
 
-      // Save session + update wrong_stack (fire-and-forget, fails silently on Vercel)
+      // Compute per-section stats for results page
+      const sectionStats: Record<string, { correct: number; total: number }> = {};
+      for (const q of questions) {
+        const sec = q.section;
+        if (!sectionStats[sec]) sectionStats[sec] = { correct: 0, total: 0 };
+        sectionStats[sec].total++;
+        const correct = new Set(q.correct.split(",").map((s) => s.trim()));
+        const given = new Set((finalAnswers[q.id] ?? "").split(",").filter(Boolean));
+        if (setsEqual(given, correct)) sectionStats[sec].correct++;
+      }
+
+      // Save session + update wrong_stack
+      // Await with 3s timeout so home stats are fresh on return; fails silently on Vercel (read-only FS)
       const answeredQuestions = questions.filter((q) => finalAnswers[q.id] !== undefined);
-      fetch("/api/session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode,
-          score,
-          total: answeredQuestions.length,
-          passed: score / total >= 0.7,
-          answers: answeredQuestions.map((q) => {
-            const correct = new Set(q.correct.split(",").map((s) => s.trim()));
-            const given = new Set((finalAnswers[q.id] ?? "").split(",").filter(Boolean));
-            return {
-              questionId: q.id,
-              selected: finalAnswers[q.id] ?? "",
-              isCorrect: setsEqual(given, correct),
-              section: q.section,
-            };
+      try {
+        await Promise.race([
+          fetch("/api/session", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mode,
+              score,
+              total: answeredQuestions.length,
+              passed: score / total >= 0.7,
+              answers: answeredQuestions.map((q) => {
+                const correct = new Set(q.correct.split(",").map((s) => s.trim()));
+                const given = new Set((finalAnswers[q.id] ?? "").split(",").filter(Boolean));
+                return {
+                  questionId: q.id,
+                  selected: finalAnswers[q.id] ?? "",
+                  isCorrect: setsEqual(given, correct),
+                  section: q.section,
+                };
+              }),
+            }),
           }),
-        }),
-      }).catch(() => {});
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("timeout")), 3000)
+          ),
+        ]);
+      } catch {}
 
       router.push(
-        `/results?score=${score}&total=${total}&passed=${score / total >= 0.7}&mode=${mode}`
+        `/results?score=${score}&total=${total}&passed=${score / total >= 0.7}&mode=${mode}` +
+        `&sections=${encodeURIComponent(JSON.stringify(sectionStats))}`
       );
     },
     [questions, total, mode, isLearn, router]
@@ -411,9 +431,9 @@ function QuizSession({ questions, mode }: { questions: QuizQuestion[]; mode: str
           {phase !== "revealed" && selected.size === 0 ? (
             <button
               onClick={handleSkip}
-              className="text-xs text-pcap-muted underline-offset-2 hover:text-pcap-text hover:underline"
+              className="rounded-lg border border-pcap-border px-4 py-2 text-xs font-medium text-pcap-muted transition-colors hover:border-pcap-muted hover:text-pcap-text"
             >
-              Überspringen → hinten anstellen
+              Keine Auswahl — Frage überspringen
             </button>
           ) : (
             <span className="text-xs text-pcap-muted">
@@ -455,8 +475,8 @@ function QuizClientInner({ mode }: { mode: string }) {
   const [questions, setQuestions] = useState<QuizQuestion[] | null>(null);
   const [error, setError] = useState(false);
 
-  const qtN    = mode === "quicktest" ? parseInt(searchParams.get("n")    ?? "15", 10) : 40;
-  const qtMins = mode === "quicktest" ? parseInt(searchParams.get("mins") ?? "20", 10) : 0;
+  const qtN    = mode === "quicktest" ? parseInt(searchParams.get("questions") ?? "15", 10) : 40;
+  const qtMins = mode === "quicktest" ? parseInt(searchParams.get("time")      ?? "20", 10) : 0;
 
   if (mode === "quicktest") {
     MODE_CONFIG.quicktest.timerSecs = qtMins * 60;
