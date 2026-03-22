@@ -161,6 +161,20 @@ export function getWrongStackQuestions(): QuizQuestion[] {
   }
 }
 
+export function getQuestionsByIds(ids: number[]): QuizQuestion[] {
+  if (ids.length === 0) return [];
+  const db = openDb();
+  try {
+    const placeholders = ids.map(() => "?").join(",");
+    const rows = db
+      .prepare(`SELECT * FROM questions WHERE id IN (${placeholders})`)
+      .all(...ids) as unknown as DbQuestionRow[];
+    return rows.map(mapRow);
+  } finally {
+    db.close();
+  }
+}
+
 export function getFlaggedQuestions(): QuizQuestion[] {
   const db = openDb();
   try {

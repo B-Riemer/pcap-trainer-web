@@ -3,6 +3,13 @@
 import { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { QuizQuestion } from "@/lib/db";
+import {
+  saveSession,
+  updateWrongStack,
+  toggleFlagged,
+  getFlaggedStack,
+  getWrongStackIds,
+} from "@/lib/storage";
 
 // ── Mode config ────────────────────────────────────────────────────────────────
 
@@ -119,8 +126,10 @@ function QuizSession({ questions, mode }: { questions: QuizQuestion[]; mode: str
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [phase, setPhase] = useState<"answering" | "revealed">("answering");
   const [secondsLeft, setSecondsLeft] = useState(cfg.timerSecs);
-  // Track which question IDs user flagged this session
-  const [flaggedIds, setFlaggedIds] = useState<Set<number>>(new Set());
+  // Initialise from localStorage so flag state is correct from the start
+  const [flaggedIds, setFlaggedIds] = useState<Set<number>>(
+    () => new Set(getFlaggedStack())
+  );
   const finishedRef = useRef(false);
   const answersRef = useRef<Record<number, string>>({});
 
@@ -166,9 +175,18 @@ function QuizSession({ questions, mode }: { questions: QuizQuestion[]; mode: str
         if (setsEqual(given, correct)) sectionStats[sec].correct++;
       }
 
-      // Save session + update wrong_stack
-      // Await with 3s timeout so home stats are fresh on return; fails silently on Vercel (read-only FS)
       const answeredQuestions = questions.filter((q) => finalAnswers[q.id] !== undefined);
+
+      // Primary: localStorage (works everywhere)
+      saveSession({
+        mode,
+        score,
+        total: answeredQuestions.length,
+        passed: score / total >= 0.7,
+        date: new Date().toISOString(),
+      });
+
+      // Secondary: SQLite via API (dev only, await max 3s so home stats refresh)
       try {
         await Promise.race([
           fetch("/api/session", {
@@ -249,6 +267,10 @@ function QuizSession({ questions, mode }: { questions: QuizQuestion[]; mode: str
   const handleWeiter = () => {
     const ansStr = [...selected].sort().join(",");
     answersRef.current = { ...answersRef.current, [question.id]: ansStr };
+    // Update wrong stack immediately in localStorage
+    const correct = new Set(question.correct.split(",").map((s) => s.trim()));
+    const given   = new Set(ansStr.split(",").filter(Boolean));
+    updateWrongStack(question.id, setsEqual(given, correct));
     if (cfg.feedback) {
       setPhase("revealed");
     } else {
@@ -278,13 +300,14 @@ function QuizSession({ questions, mode }: { questions: QuizQuestion[]; mode: str
 
   const handleToggleFlag = () => {
     const qid = question.id;
+    // Primary: localStorage
+    const nowFlagged = toggleFlagged(qid);
     setFlaggedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(qid)) next.delete(qid);
-      else next.add(qid);
+      if (nowFlagged) next.add(qid); else next.delete(qid);
       return next;
     });
-    // Persist to DB (fire-and-forget)
+    // Secondary: SQLite via API (dev only, fire-and-forget)
     fetch("/api/flagged", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -483,9 +506,22 @@ function QuizClientInner({ mode }: { mode: string }) {
   }
 
   useEffect(() => {
-    const url = mode === "quicktest"
-      ? `/api/questions?mode=quicktest&limit=${qtN}`
-      : `/api/questions?mode=${encodeURIComponent(mode)}`;
+    let url: string;
+
+    if (mode === "quicktest") {
+      url = `/api/questions?mode=quicktest&limit=${qtN}`;
+    } else if (mode === "wrong-stack") {
+      const ids = getWrongStackIds();
+      if (ids.length === 0) { setQuestions([]); return; }
+      url = `/api/questions?mode=ids&ids=${ids.join(",")}`;
+    } else if (mode === "flagged") {
+      const ids = getFlaggedStack();
+      if (ids.length === 0) { setQuestions([]); return; }
+      url = `/api/questions?mode=ids&ids=${ids.join(",")}`;
+    } else {
+      url = `/api/questions?mode=${encodeURIComponent(mode)}`;
+    }
+
     fetch(url)
       .then((r) => { if (!r.ok) throw new Error(r.statusText); return r.json(); })
       .then((data: unknown) => {

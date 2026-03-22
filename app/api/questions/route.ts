@@ -4,6 +4,7 @@ import {
   getLearnQuestions,
   getWrongStackQuestions,
   getFlaggedQuestions,
+  getQuestionsByIds,
 } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +25,11 @@ export async function GET(req: NextRequest) {
         return NextResponse.json(getFlaggedQuestions());
       case "quicktest":
         return NextResponse.json(getExamQuestions(limit));
+      case "ids": {
+        const raw = req.nextUrl.searchParams.get("ids") ?? "";
+        const ids = raw.split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0);
+        return NextResponse.json(getQuestionsByIds(ids));
+      }
       default:
         return NextResponse.json({ error: "Unknown mode" }, { status: 400 });
     }
