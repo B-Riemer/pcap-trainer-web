@@ -49,7 +49,12 @@ function ModeCard({ icon, title, lines, titleColor, btnBg, href }: {
 // ── Page (Server Component) ───────────────────────────────────────────────────
 
 export default async function Home() {
-  const { totalQuestions } = getStats();
+  let totalQuestions = 0;
+  try {
+    ({ totalQuestions } = getStats());
+  } catch {
+    // DB unavailable (e.g. wrong Node.js version on host) — render with fallback
+  }
 
   return (
     <div className="min-h-screen bg-pcap-bg font-sans text-pcap-text">
